@@ -124,10 +124,9 @@ app.MapGet("/api/query-history", async (ApplicationDbContext db) =>
             .ToListAsync();
         return Results.Ok(history);
     }
-    catch (Exception)
+    catch (Exception ex)
     {
-        // Return empty list if table doesn't exist
-        return Results.Ok(new List<Query>());
+        return Results.BadRequest(new { error = ex.Message });
     }
 });
 
