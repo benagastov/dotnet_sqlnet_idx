@@ -1,0 +1,39 @@
+{
+  "Version": 1,
+  "Hash": "Wx97L3Rr+clARCl2/cbl5KrtsZcqVHJ/W/+aaCsAjOU=",
+  "Source": "myapp",
+  "BasePath": "_content/myapp",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [
+    {
+      "Name": "myapp/wwwroot",
+      "Source": "myapp",
+      "ContentRoot": "/home/user/weqeqwe/wwwroot/",
+      "BasePath": "_content/myapp",
+      "Pattern": "**"
+    }
+  ],
+  "Assets": [
+    {
+      "Identity": "/home/user/weqeqwe/wwwroot/index.html",
+      "SourceId": "myapp",
+      "SourceType": "Discovered",
+      "ContentRoot": "/home/user/weqeqwe/wwwroot/",
+      "BasePath": "_content/myapp",
+      "RelativePath": "index.html",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "PreferTarget",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot/index.html"
+    }
+  ]
+}
