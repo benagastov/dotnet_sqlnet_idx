@@ -8,6 +8,7 @@ public class ApplicationDbContext : DbContext
     public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
         : base(options)
     {
+<<<<<<< HEAD
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -23,5 +24,10 @@ public class ApplicationDbContext : DbContext
         });
     }
 
+=======
+        Database.EnsureCreated();
+    }
+
+>>>>>>> 9559f54c25a82f0b45e6d89035f8ebb26480d09b
     public DbSet<Query> Queries { get; set; } = null!;
 } 

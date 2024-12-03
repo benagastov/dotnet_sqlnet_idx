@@ -178,4 +178,47 @@ app.MapGet("/api/tables", async (ApplicationDbContext db) =>
     }
 });
 
+app.MapPost("/api/execute-query", async (string sqlQuery, ApplicationDbContext db) =>
+{
+    try
+    {
+        var result = new List<Dictionary<string, object>>();
+        using (var connection = new SqliteConnection(builder.Configuration.GetConnectionString("DefaultConnection")))
+        {
+            await connection.OpenAsync();
+            using var command = new SqliteCommand(sqlQuery, connection);
+            using var reader = await command.ExecuteReaderAsync();
+            
+            while (await reader.ReadAsync())
+            {
+                var row = new Dictionary<string, object>();
+                for (int i = 0; i < reader.FieldCount; i++)
+                {
+                    row[reader.GetName(i)] = reader.GetValue(i);
+                }
+                result.Add(row);
+            }
+        }
+
+        // Save query history
+        var queryRecord = new Query
+        {
+            SqlQuery = sqlQuery,
+            Result = System.Text.Json.JsonSerializer.Serialize(result),
+            ExecutedAt = DateTime.UtcNow
+        };
+        db.Queries.Add(queryRecord);
+        await db.SaveChangesAsync();
+
+        return Results.Ok(new { data = result });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+app.MapGet("/api/query-history", async (ApplicationDbContext db) =>
+    await db.Queries.OrderByDescending(q => q.ExecutedAt).Take(10).ToListAsync());
+
 app.Run();
