@@ -14,6 +14,36 @@ builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
+// Ensure database and tables are created
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    try
+    {
+        var context = services.GetRequiredService<ApplicationDbContext>();
+        // This will create the database and all tables
+        context.Database.EnsureDeleted(); // Remove old database
+        context.Database.EnsureCreated(); // Create fresh database
+        
+        // Create Queries table explicitly if needed
+        using var connection = new SqliteConnection(builder.Configuration.GetConnectionString("DefaultConnection"));
+        connection.Open();
+        using var command = new SqliteCommand(@"
+            CREATE TABLE IF NOT EXISTS Queries (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                SqlQuery TEXT NOT NULL,
+                Result TEXT NOT NULL,
+                ExecutedAt TEXT NOT NULL
+            )", connection);
+        command.ExecuteNonQuery();
+    }
+    catch (Exception ex)
+    {
+        var logger = services.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "An error occurred while creating the database.");
+    }
+}
+
 // Enable static files for index.html
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -22,52 +52,15 @@ app.UseStaticFiles();
 app.MapGet("/api/debug/connection", (ApplicationDbContext db) =>
 {
     var dbPath = db.Database.GetConnectionString();
-    var todoCount = db.Todos.Count();
-    return new { DatabasePath = dbPath, NumberOfTodos = todoCount };
+    return new { DatabasePath = dbPath };
 });
 
 // Then your existing Swagger setup
 app.UseSwagger();
 app.UseSwaggerUI();
 
-// Basic CRUD endpoints
-app.MapGet("/api/todos", async (ApplicationDbContext db) =>
-    await db.Todos.ToListAsync());
-
-app.MapGet("/api/todos/{id}", async (int id, ApplicationDbContext db) =>
-    await db.Todos.FindAsync(id));
-
-app.MapPost("/api/todos", async (Todo todo, ApplicationDbContext db) =>
-{
-    db.Todos.Add(todo);
-    await db.SaveChangesAsync();
-    return todo;
-});
-
-// Add PUT endpoint for updating todo status
-app.MapPut("/api/todos/{id}", async (int id, Todo inputTodo, ApplicationDbContext db) =>
-{
-    var todo = await db.Todos.FindAsync(id);
-    if (todo == null) return Results.NotFound();
-    
-    todo.IsComplete = inputTodo.IsComplete;
-    todo.Title = inputTodo.Title;
-    await db.SaveChangesAsync();
-    return Results.Ok(todo);
-});
-
-app.MapDelete("/api/todos/{id}", async (int id, ApplicationDbContext db) =>
-{
-    var todo = await db.Todos.FindAsync(id);
-    if (todo != null)
-    {
-        db.Todos.Remove(todo);
-        await db.SaveChangesAsync();
-    }
-    return todo;
-});
-
-app.MapPost("/api/execute-query", async (string sqlQuery, ApplicationDbContext db) =>
+// Ensure the SQL query endpoints are correctly set up
+app.MapPost("/api/execute-query", async (QueryRequest request, ApplicationDbContext db) =>
 {
     try
     {
@@ -75,24 +68,38 @@ app.MapPost("/api/execute-query", async (string sqlQuery, ApplicationDbContext d
         using (var connection = new SqliteConnection(builder.Configuration.GetConnectionString("DefaultConnection")))
         {
             await connection.OpenAsync();
-            using var command = new SqliteCommand(sqlQuery, connection);
-            using var reader = await command.ExecuteReaderAsync();
+            using var command = new SqliteCommand(request.SqlQuery, connection);
             
-            while (await reader.ReadAsync())
+            // For CREATE TABLE and other non-query commands
+            if (request.SqlQuery.Trim().ToUpper().StartsWith("CREATE") || 
+                request.SqlQuery.Trim().ToUpper().StartsWith("INSERT") || 
+                request.SqlQuery.Trim().ToUpper().StartsWith("UPDATE") || 
+                request.SqlQuery.Trim().ToUpper().StartsWith("DELETE"))
             {
-                var row = new Dictionary<string, object>();
-                for (int i = 0; i < reader.FieldCount; i++)
+                var rowsAffected = await command.ExecuteNonQueryAsync();
+                result.Add(new Dictionary<string, object> { 
+                    { "message", $"Command executed successfully. Rows affected: {rowsAffected}" } 
+                });
+            }
+            else // For SELECT queries
+            {
+                using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
                 {
-                    row[reader.GetName(i)] = reader.GetValue(i);
+                    var row = new Dictionary<string, object>();
+                    for (int i = 0; i < reader.FieldCount; i++)
+                    {
+                        row[reader.GetName(i)] = reader.GetValue(i) ?? DBNull.Value;
+                    }
+                    result.Add(row);
                 }
-                result.Add(row);
             }
         }
 
         // Save query history
         var queryRecord = new Query
         {
-            SqlQuery = sqlQuery,
+            SqlQuery = request.SqlQuery,
             Result = System.Text.Json.JsonSerializer.Serialize(result),
             ExecutedAt = DateTime.UtcNow
         };
@@ -108,6 +115,67 @@ app.MapPost("/api/execute-query", async (string sqlQuery, ApplicationDbContext d
 });
 
 app.MapGet("/api/query-history", async (ApplicationDbContext db) =>
-    await db.Queries.OrderByDescending(q => q.ExecutedAt).Take(10).ToListAsync());
+{
+    try 
+    {
+        var history = await db.Queries
+            .OrderByDescending(q => q.ExecutedAt)
+            .Take(10)
+            .ToListAsync();
+        return Results.Ok(history);
+    }
+    catch (Exception)
+    {
+        // Return empty list if table doesn't exist
+        return Results.Ok(new List<Query>());
+    }
+});
+
+app.MapDelete("/api/query-history", async (ApplicationDbContext db) =>
+{
+    try 
+    {
+        // Delete all records from the Queries table
+        db.Queries.RemoveRange(db.Queries);
+        await db.SaveChangesAsync();
+        return Results.Ok(new { message = "History deleted successfully" });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+// Add this endpoint before app.Run()
+app.MapGet("/api/tables", async (ApplicationDbContext db) =>
+{
+    try
+    {
+        var result = new List<Dictionary<string, object>>();
+        using (var connection = new SqliteConnection(builder.Configuration.GetConnectionString("DefaultConnection")))
+        {
+            await connection.OpenAsync();
+            using var command = new SqliteCommand(
+                @"SELECT name FROM sqlite_master 
+                  WHERE type='table' 
+                  AND name NOT LIKE 'sqlite_%' 
+                  AND name NOT LIKE 'Queries'", connection);
+            
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                result.Add(new Dictionary<string, object>
+                {
+                    { "tableName", reader.GetString(0) }
+                });
+            }
+        }
+        return Results.Ok(new { data = result });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
 
 app.Run();

@@ -55,6 +55,40 @@
         button:hover {
             background-color: #45a049;
         }
+        .tables-container {
+            margin: 20px 0;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+        .table-item {
+            display: inline-block;
+            margin: 5px;
+            padding: 5px 10px;
+            background-color: #e9ecef;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .table-item:hover {
+            background-color: #dee2e6;
+        }
+        .history-actions {
+            margin-bottom: 15px;
+            display: flex;
+            gap: 10px;
+        }
+        .danger-button {
+            background-color: #dc3545;
+        }
+        .danger-button:hover {
+            background-color: #c82333;
+        }
+        .secondary-button {
+            background-color: #6c757d;
+        }
+        .secondary-button:hover {
+            background-color: #5a6268;
+        }
     </style>
 </head>
 <body>
@@ -65,6 +99,11 @@
         <button onclick="executeQuery()">Execute Query</button>
     </div>
 
+    <div class="tables-container">
+        <h2>Available Tables</h2>
+        <div id="tablesList"></div>
+    </div>
+
     <div class="result-container">
         <h2>Results</h2>
         <div id="queryResult"></div>
@@ -72,6 +111,10 @@
 
     <div class="history-container">
         <h2>Query History</h2>
+        <div class="history-actions">
+            <button onclick="deleteHistory()" class="danger-button">Delete All History</button>
+            <button onclick="downloadHistory()" class="secondary-button">Download History</button>
+        </div>
         <div id="queryHistory"></div>
     </div>
 
@@ -81,34 +124,48 @@
             const resultDiv = document.getElementById('queryResult');
             
             try {
+                // Log the request body for debugging
+                const requestBody = { sqlQuery: queryInput.value };
+                console.log('Sending request:', requestBody);
+
                 const response = await fetch('/api/execute-query', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify(queryInput.value)
+                    body: JSON.stringify(requestBody)
                 });
 
-                const result = await response.json();
-                
-                if (response.ok) {
-                    displayResults(result.data);
-                } else {
-                    resultDiv.innerHTML = `<div class="error">${result.error}</div>`;
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText);
                 }
-                
-                loadQueryHistory();
+
+                const result = await response.json();
+                displayResults(result.data);
+                await loadQueryHistory();
+                await loadTables();
             } catch (error) {
                 resultDiv.innerHTML = `<div class="error">Error executing query: ${error.message}</div>`;
+                console.error('Query error:', error);
             }
         }
 
         function displayResults(data) {
+            const resultDiv = document.getElementById('queryResult');
+            
             if (!data || data.length === 0) {
-                document.getElementById('queryResult').innerHTML = 'No results found';
+                resultDiv.innerHTML = 'No results found';
                 return;
             }
 
+            // Check if it's a message response (for non-query commands)
+            if (data.length === 1 && data[0].message) {
+                resultDiv.innerHTML = `<div>${data[0].message}</div>`;
+                return;
+            }
+
+            // Display results in table format for SELECT queries
             const columns = Object.keys(data[0]);
             let table = '<table><thead><tr>';
             columns.forEach(col => {
@@ -119,19 +176,30 @@
             data.forEach(row => {
                 table += '<tr>';
                 columns.forEach(col => {
-                    table += `<td>${row[col]}</td>`;
+                    const value = row[col];
+                    table += `<td>${value === null ? 'NULL' : value}</td>`;
                 });
                 table += '</tr>';
             });
 
             table += '</tbody></table>';
-            document.getElementById('queryResult').innerHTML = table;
+            resultDiv.innerHTML = table;
         }
 
         async function loadQueryHistory() {
+            const historyDiv = document.getElementById('queryHistory');
             try {
                 const response = await fetch('/api/query-history');
+                if (!response.ok) {
+                    throw new Error('Failed to load query history');
+                }
+                
                 const history = await response.json();
+                
+                if (!history || history.length === 0) {
+                    historyDiv.innerHTML = 'No query history';
+                    return;
+                }
                 
                 let historyHtml = '<table><thead><tr><th>Query</th><th>Executed At</th></tr></thead><tbody>';
                 history.forEach(item => {
@@ -144,14 +212,108 @@
                 });
                 historyHtml += '</tbody></table>';
                 
-                document.getElementById('queryHistory').innerHTML = historyHtml;
+                historyDiv.innerHTML = historyHtml;
             } catch (error) {
                 console.error('Error loading history:', error);
+                historyDiv.innerHTML = 'Error loading query history';
             }
         }
 
-        // Load query history when page loads
-        document.addEventListener('DOMContentLoaded', loadQueryHistory);
+        async function loadTables() {
+            const tablesDiv = document.getElementById('tablesList');
+            try {
+                const response = await fetch('/api/tables');
+                if (!response.ok) {
+                    throw new Error('Failed to load tables');
+                }
+                
+                const result = await response.json();
+                const tables = result.data;
+                
+                if (!tables || tables.length === 0) {
+                    tablesDiv.innerHTML = 'No tables found';
+                    return;
+                }
+                
+                const tableHtml = tables.map(table => `
+                    <span class="table-item" onclick="showTableStructure('${table.tableName}')">
+                        ${table.tableName}
+                    </span>
+                `).join('');
+                
+                tablesDiv.innerHTML = tableHtml;
+            } catch (error) {
+                console.error('Error loading tables:', error);
+                tablesDiv.innerHTML = 'Error loading tables';
+            }
+        }
+
+        async function showTableStructure(tableName) {
+            const queryInput = document.querySelector('.query-input');
+            queryInput.value = `SELECT * FROM ${tableName} LIMIT 5;`;
+        }
+
+        async function deleteHistory() {
+            if (!confirm('Are you sure you want to delete all query history?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/query-history', {
+                    method: 'DELETE'
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to delete history');
+                }
+                
+                await loadQueryHistory();
+            } catch (error) {
+                console.error('Error deleting history:', error);
+                alert('Error deleting history');
+            }
+        }
+
+        async function downloadHistory() {
+            try {
+                const response = await fetch('/api/query-history');
+                if (!response.ok) {
+                    throw new Error('Failed to load query history');
+                }
+                
+                const history = await response.json();
+                
+                // Convert history to CSV format
+                const csvContent = [
+                    ['Query', 'Result', 'Executed At'],
+                    ...history.map(item => [
+                        item.sqlQuery,
+                        item.result,
+                        new Date(item.executedAt).toLocaleString()
+                    ])
+                ].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+                
+                // Create and trigger download
+                const blob = new Blob([csvContent], { type: 'text/csv' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `query-history-${new Date().toISOString().split('T')[0]}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            } catch (error) {
+                console.error('Error downloading history:', error);
+                alert('Error downloading history');
+            }
+        }
+
+        // Load query history and tables when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            loadQueryHistory();
+            loadTables();
+        });
     </script>
 </body>
 </html> 
